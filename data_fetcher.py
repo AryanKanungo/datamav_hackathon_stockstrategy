@@ -30,8 +30,8 @@ def fetch_data(ticker: str, start_date: datetime, end_date: datetime, is_batch: 
             first_ticker = data.columns.levels[1][0]
             
             # Only show warning if NOT in batch mode
-            if not is_batch:
-                st.warning(f"Multiple tickers detected. Selecting first ticker: {first_ticker}")
+            # if not is_batch:
+            #     st.warning(f"Multiple tickers detected. Selecting first ticker: {first_ticker}")
             
             data = data.xs(first_ticker, axis=1, level=1)
             data.columns = [col.capitalize() for col in data.columns]

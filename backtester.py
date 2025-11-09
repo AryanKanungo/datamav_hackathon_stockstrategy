@@ -1,15 +1,16 @@
 import pandas as pd
 import numpy as np
 
-def run_backtest(signals_df: pd.DataFrame, exit_strategy: str, take_profit: float, stop_loss: float) -> dict:
+def run_backtest(signals_df: pd.DataFrame, exit_strategy: str, take_profit: float, stop_loss: float, trade_timeout_days: int) -> dict:
     """
-    Runs the backtest simulation.
+    Runs the backtest simulation based on EOD (End of Day) closing prices.
     
     Args:
         signals_df (pd.DataFrame): The DataFrame with signals from strategy.py.
         exit_strategy (str): "Take Profit / Stop Loss" or "Reverse Crossover".
         take_profit (float): The take profit percentage (e.g., 0.10 for 10%).
         stop_loss (float): The stop loss percentage (e.g., 0.05 for 5%).
+        trade_timeout_days (int): Max number of days to hold a trade.
         
     Returns:
         dict: A dictionary containing the backtest results.
@@ -21,46 +22,81 @@ def run_backtest(signals_df: pd.DataFrame, exit_strategy: str, take_profit: floa
     
     # Loop through the signals dataframe
     for index, row in signals_df.iterrows():
-        current_price = row['Close']
         
         # --- Check for Exit Conditions FIRST (if in position) ---
         if in_position:
+            
+            # --- Rule-Compliant EOD (Closing Price) Logic ---
+            take_profit_price = entry_price * (1 + take_profit)
+            stop_loss_price = entry_price * (1 - stop_loss)
+            
             if exit_strategy == "Take Profit / Stop Loss":
-                # Check Stop-Loss
-                if current_price <= entry_price * (1 - stop_loss):
-                    pnl_pct = (current_price - entry_price) / entry_price
+                # Check 1: Take-Profit (using Closing price)
+                if row['Close'] >= take_profit_price:
+                    exit_price = row['Close'] # Exit at this day's close
+                    pnl_pct = (exit_price - entry_price) / entry_price
                     trades.append({
                         "Entry Date": entry_date,
                         "Entry Price": entry_price,
                         "Exit Date": index,
-                        "Exit Price": current_price,
+                        "Exit Price": exit_price,
+                        "P&L %": pnl_pct,
+                        "Exit Type": "Take-Profit"
+                    })
+                    in_position = False
+                
+                # Check 2: Stop-Loss (using Closing price)
+                elif row['Close'] <= stop_loss_price:
+                    exit_price = row['Close'] # Exit at this day's close
+                    pnl_pct = (exit_price - entry_price) / entry_price
+                    trades.append({
+                        "Entry Date": entry_date,
+                        "Entry Price": entry_price,
+                        "Exit Date": index,
+                        "Exit Price": exit_price,
                         "P&L %": pnl_pct,
                         "Exit Type": "Stop-Loss"
                     })
                     in_position = False
                 
-                # Check Take-Profit
-                elif current_price >= entry_price * (1 + take_profit):
-                    pnl_pct = (current_price - entry_price) / entry_price
+                # Check 3: Trade Timeout (new feature from rules)
+                elif (index - entry_date).days >= trade_timeout_days:
+                    exit_price = row['Close'] # Exit at this day's close
+                    pnl_pct = (exit_price - entry_price) / entry_price
                     trades.append({
                         "Entry Date": entry_date,
                         "Entry Price": entry_price,
                         "Exit Date": index,
-                        "Exit Price": current_price,
+                        "Exit Price": exit_price,
                         "P&L %": pnl_pct,
-                        "Exit Type": "Take-Profit"
+                        "Exit Type": "Timeout"
+                    })
+                    in_position = False
+                
+                # Check 4: Reverse Crossover (as a fallback)
+                elif row['position'] == -1.0:
+                    exit_price = row['Close'] # Exit at close on crossover
+                    pnl_pct = (exit_price - entry_price) / entry_price
+                    trades.append({
+                        "Entry Date": entry_date,
+                        "Entry Price": entry_price,
+                        "Exit Date": index,
+                        "Exit Price": exit_price,
+                        "P&L %": pnl_pct,
+                        "Exit Type": "Reverse Crossover"
                     })
                     in_position = False
             
             elif exit_strategy == "Reverse Crossover":
                 # Check for bearish crossover (sell signal)
                 if row['position'] == -1.0:
-                    pnl_pct = (current_price - entry_price) / entry_price
+                    exit_price = row['Close'] # Exit at close on crossover
+                    pnl_pct = (exit_price - entry_price) / entry_price
                     trades.append({
                         "Entry Date": entry_date,
                         "Entry Price": entry_price,
                         "Exit Date": index,
-                        "Exit Price": current_price,
+                        "Exit Price": exit_price,
                         "P&L %": pnl_pct,
                         "Exit Type": "Reverse Crossover"
                     })
@@ -71,7 +107,7 @@ def run_backtest(signals_df: pd.DataFrame, exit_strategy: str, take_profit: floa
             # Check for bullish crossover (buy signal)
             if row['position'] == 1.0:
                 in_position = True
-                entry_price = current_price
+                entry_price = row['Close'] # Enter at the close of the signal day
                 entry_date = index
 
     # --- End of Backtest: Close any open position ---
@@ -103,6 +139,7 @@ def run_backtest(signals_df: pd.DataFrame, exit_strategy: str, take_profit: floa
 
     total_trades = len(trades_df)
     winning_trades = trades_df[trades_df['P&L %'] > 0]
+    # --- FIX: Corrected typo "winning_ trades" to "winning_trades" ---
     win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
     
     # Calculate total return (compounded)

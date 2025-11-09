@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 import streamlit as st # Import streamlit for st.warning
 
-def fetch_data(ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+def fetch_data(ticker: str, start_date: datetime, end_date: datetime, is_batch: bool = False) -> pd.DataFrame:
     """
     Fetches historical stock data from Yahoo Finance.
     
@@ -11,36 +11,32 @@ def fetch_data(ticker: str, start_date: datetime, end_date: datetime) -> pd.Data
         ticker (str): The stock ticker symbol (e.g., "RELIANCE.NS").
         start_date (datetime): The start date for the data.
         end_date (datetime): The end date for the data.
+        is_batch (bool): Flag to suppress warnings during batch runs.
         
     Returns:
         pd.DataFrame: A DataFrame with historical stock data, indexed by Date.
                       Contains 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume'.
     """
     try:
-        data = yf.download(ticker, start=start_date, end=end_date)
+        # Added progress=False to silence yfinance during batch runs
+        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
         
         if data.empty:
             print(f"No data returned for ticker {ticker} from {start_date} to {end_date}.")
             return pd.DataFrame()
             
         # --- FIX for Multi-Ticker input ---
-        # If yfinance returns a MultiIndex (because user entered >1 ticker),
-        # we select the data for the *first* ticker to proceed.
         if isinstance(data.columns, pd.MultiIndex):
-            # Get the first ticker from the 'level 1' of the columns
             first_ticker = data.columns.levels[1][0]
-            st.warning(f"Multiple tickers detected. Selecting first ticker: {first_ticker}")
             
-            # Select all columns for this first ticker
-            # and drop the multi-index
+            # Only show warning if NOT in batch mode
+            if not is_batch:
+                st.warning(f"Multiple tickers detected. Selecting first ticker: {first_ticker}")
+            
             data = data.xs(first_ticker, axis=1, level=1)
-            
-            # The columns are now 'Adj Close', 'Close', etc.
-            # Let's capitalize them for consistency.
             data.columns = [col.capitalize() for col in data.columns]
         # --- End of Fix ---
             
-        # Ensure the index is a DatetimeIndex
         data.index = pd.to_datetime(data.index)
         
         return data

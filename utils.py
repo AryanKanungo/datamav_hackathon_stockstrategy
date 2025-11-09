@@ -5,7 +5,7 @@ from plotly.subplots import make_subplots
 
 def display_metrics_table(metrics: dict, strategy_name: str, ticker: str, period_str: str, entry_str: str, exit_str: str):
     """
-    Displays the final hackathon-specific results table.
+    Displays the final hackathon-specific results table for a SINGLE stock.
     """
     
     report_data = {
@@ -103,3 +103,61 @@ def plot_backtest_graph(signals_df: pd.DataFrame, trades_df: pd.DataFrame, strat
     )
     
     return fig
+
+# --- THIS IS THE NEW FUNCTION YOU NEED ---
+def display_batch_results(results_df: pd.DataFrame, strategy_name: str):
+    """
+    Displays the aggregated results from a batch backtest.
+    """
+    st.subheader(f"Batch Test Results: {strategy_name}")
+    
+    if results_df.empty:
+        st.warning("No trades were made across all stocks.")
+        return
+
+    # 1. Top-Level Metrics
+    num_stocks_tested = len(results_df)
+    total_trades = results_df['total_trades'].sum()
+    
+    # Strategy Win Rate = % of stocks that were profitable
+    profitable_stocks = results_df[results_df['total_return'] > 0]
+    strategy_win_rate = (len(profitable_stocks) / num_stocks_tested) * 100 if num_stocks_tested > 0 else 0
+    
+    # Average Return (mean of all stock returns)
+    avg_return = results_df['total_return'].mean()
+    
+    # Average Win Rate (mean of all individual trade win rates)
+    avg_trade_win_rate = results_df['win_rate'].mean()
+
+    # Display metrics in columns
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Stocks Tested", f"{num_stocks_tested}")
+    col2.metric("Total Trades", f"{total_trades:,.0f}")
+    col3.metric("Strategy Win Rate", f"{strategy_win_rate:.2f}%",
+               help="Percentage of stocks that had a positive return.")
+    col4.metric("Avg. Stock Return", f"{avg_return:.2f}%",
+               help="The average P&L % across all stocks tested.")
+    
+    st.markdown("---")
+
+    # 2. Top/Bottom Performers
+    st.subheader("Performance by Stock")
+    
+    # Sort by total return, descending
+    sorted_df = results_df.sort_values(by='total_return', ascending=False)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Top 10 Best Performers")
+        st.dataframe(sorted_df[['ticker', 'total_return', 'win_rate', 'total_trades']].head(10),
+                       use_container_width=True)
+    
+    with col2:
+        st.markdown("#### Top 10 Worst Performers")
+        st.dataframe(sorted_df[['ticker', 'total_return', 'win_rate', 'total_trades']].tail(10).sort_values(by='total_return', ascending=True),
+                       use_container_width=True)
+
+    # 3. Full Results
+    with st.expander("Show Full Results for All Stocks"):
+        st.dataframe(sorted_df, use_container_width=True)

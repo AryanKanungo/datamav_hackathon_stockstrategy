@@ -1,55 +1,105 @@
-# utils.py
-import plotly.graph_objects as go
+import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-def plot_candlestick(df: pd.DataFrame, title: str = "Candlestick"):
+def display_metrics_table(metrics: dict, strategy_name: str, ticker: str, period_str: str, entry_str: str, exit_str: str):
+    """
+    Displays the final hackathon-specific results table.
+    """
+    
+    report_data = {
+        "Metric": [
+            "Strategy Name",
+            "Stocks Tested",
+            "Backtest Period",
+            "Entry Criteria",
+            "Exit Criteria",
+            "Return (%)",
+            "Max Drawdown (%)",
+            "Win Rate (%)",
+            "Number of Trades"
+        ],
+        "Value": [
+            strategy_name,
+            ticker,
+            period_str,
+            entry_str,
+            exit_str,
+            f"{metrics['total_return']:.2f}%",
+            f"{metrics['max_drawdown']:.2f}%",
+            f"{metrics['win_rate']:.2f}%",
+            metrics['total_trades']
+        ]
+    }
+    
+    report_df = pd.DataFrame(report_data)
+    st.dataframe(report_df.set_index("Metric"), use_container_width=True)
+
+def plot_backtest_graph(signals_df: pd.DataFrame, trades_df: pd.DataFrame, strategy_name: str) -> go.Figure:
+    """
+    Creates the Plotly graph with price, MAs, and trade markers.
+    """
+    
+    # Create a figure with candlestick chart
     fig = go.Figure(data=[go.Candlestick(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close'],
-        name='OHLC'
+        x=signals_df.index,
+        open=signals_df['Open'],
+        high=signals_df['High'],
+        low=signals_df['Low'],
+        close=signals_df['Close'],
+        name='Price'
     )])
-    fig.update_layout(title=title, xaxis_rangeslider_visible=False)
-    return fig
+    
+    # Add Moving Averages
+    fig.add_trace(go.Scatter(
+        x=signals_df.index,
+        y=signals_df['fast_ma'],
+        mode='lines',
+        name='Fast MA',
+        line=dict(color='cyan', width=1)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=signals_df.index,
+        y=signals_df['slow_ma'],
+        mode='lines',
+        name='Slow MA',
+        line=dict(color='orange', width=1)
+    ))
+    
+    # Add Trade Markers (if any trades)
+    if not trades_df.empty:
+        # Re-index trades_df if it's not already
+        if 'Entry Date' in trades_df.columns:
+             trades_df = trades_df.set_index('Entry Date')
+             
+        # Buy Markers
+        fig.add_trace(go.Scatter(
+            x=trades_df.index,
+            y=trades_df['Entry Price'],
+            mode='markers',
+            name='Buy Signal',
+            marker=dict(color='green', symbol='triangle-up', size=10)
+        ))
+        
+        # Sell Markers
+        fig.add_trace(go.Scatter(
+            x=trades_df['Exit Date'],
+            y=trades_df['Exit Price'],
+            mode='markers',
+            name='Sell Signal',
+            marker=dict(color='red', symbol='triangle-down', size=10)
+        ))
 
-def plot_heikin_ashi(df: pd.DataFrame, ha_df: pd.DataFrame, title: str = "Heikin-Ashi"):
-    fig = go.Figure(data=[go.Candlestick(
-        x=ha_df.index,
-        open=ha_df['HA_Open'],
-        high=ha_df['HA_High'],
-        low=ha_df['HA_Low'],
-        close=ha_df['HA_Close'],
-        name='Heikin-Ashi'
-    )])
-    fig.update_layout(title=title, xaxis_rangeslider_visible=False)
-    return fig
-
-def plot_line(df: pd.DataFrame, column='Close', title: str = "Line"):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df[column], mode='lines', name=column))
-    fig.update_layout(title=title)
-    return fig
-
-def plot_ohlc_bar(df: pd.DataFrame, title: str = "OHLC Bars"):
-    fig = go.Figure(data=[go.Ohlc(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close']
-    )])
-    fig.update_layout(title=title, xaxis_rangeslider_visible=False)
-    return fig
-
-def plot_renko(bricks_df, title: str = "Renko"):
-    # bricks_df: DataFrame with 'brick_price' and 'direction' and implicitly index order
-    fig = go.Figure()
-    if not bricks_df.empty:
-        xs = list(range(len(bricks_df)))
-        ys = bricks_df['brick_price']
-        colors = ['green' if d == 1 else 'red' for d in bricks_df['direction']]
-        fig.add_trace(go.Bar(x=xs, y=ys, marker_color=colors, name='Renko bricks'))
-    fig.update_layout(title=title, xaxis={'visible': False})
+    # Update layout
+    fig.update_layout(
+        title=f"Backtest Results for {strategy_name}",
+        xaxis_title="Date",
+        yaxis_title="Stock Price",
+        legend_title="Legend",
+        xaxis_rangeslider_visible=False,
+        template="plotly_dark"
+    )
+    
     return fig

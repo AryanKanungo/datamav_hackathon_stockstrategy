@@ -1,149 +1,129 @@
-# app.py
 import streamlit as st
 import pandas as pd
-from datetime import date
-from data_fetcher import fetch_stock_data
-from strategy import generate_signals, heikin_ashi, renko_bricks
-from backtester import Backtester
-from utils import plot_candlestick, plot_heikin_ashi, plot_line, plot_renko, plot_ohlc_bar
-from nse500_list import nse_500
-import io
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
-st.set_page_config(layout="wide", page_title="MA Crossover Backtester")
+# Import your custom modules
+import data_fetcher
+import strategy
+import backtester
+import utils
 
-# Header
-st.title("📈 MA Crossover Backtester — NSE (EOD)")
-st.markdown("""
-**Strategy:** Moving Average Crossover (EMA/SMA/WMA)  
-**Data:** Last 3 months EOD close prices (3:30pm official close) — NSE stocks  
-Use the controls in the sidebar to choose MA type, fast/slow windows, and exit rules.
-""")
+# Set up the Streamlit page
+st.set_page_config(layout="wide")
+st.title("📈 Moving Average Crossover Backtesting Engine")
 
-# Sidebar: Strategy controls
-with st.sidebar:
-    st.header("Strategy Parameters")
-    ma_type = st.selectbox("MA Type", ["EMA", "SMA", "WMA"], index=0)
-    fast = st.number_input("Fast MA period (days)", min_value=2, max_value=50, value=10)
-    slow = st.number_input("Slow MA period (days)", min_value=5, max_value=200, value=50)
-    if slow <= fast:
-        st.warning("Slow period should be greater than fast period for meaningful crossover.")
-    st.markdown("---")
-    st.header("Exit Rules")
-    exit_choice = st.selectbox("Exit Rule", ["profit_stop", "opposite", "trailing", "days"])
-    profit_target = st.number_input("Profit target (%)", min_value=0.5, max_value=50.0, value=10.0) / 100.0
-    stop_loss = st.number_input("Stop loss (%)", min_value=0.5, max_value=50.0, value=4.0) / 100.0
-    trailing_pct = None
-    max_days = None
-    if exit_choice == "trailing":
-        trailing_pct = st.number_input("Trailing stop (%)", min_value=0.5, max_value=50.0, value=5.0) / 100.0
-    if exit_choice == "days":
-        max_days = st.number_input("Hold days", min_value=1, max_value=90, value=15)
+# --- Sidebar for User Inputs ---
+st.sidebar.header("Strategy Configuration")
 
-    st.markdown("---")
-    st.header("Backtest Options")
-    mode = st.radio("Run mode", ["Single stock", "Bulk NSE500 (sample list)"])
-    symbol = None
-    if mode == "Single stock":
-        symbol = st.text_input("Stock symbol (e.g., INFY, TCS, RELIANCE)", value="INFY").upper()
-    run_btn = st.button("Run Backtest")
+# Stock Selection
+st.sidebar.markdown("### 1. Stock Data")
+ticker = st.sidebar.text_input("Stock Ticker", "RELIANCE.NS")
+st.sidebar.caption("Use tickers from Yahoo Finance (e.g., INFY.NS, TCS.NS, HDFCBANK.NS)")
 
-# Execution
-if run_btn:
-    stocks_to_run = [symbol] if mode == "Single stock" else nse_500
-    summary_rows = []
-    detailed_results = {}
+# Date Range
+end_date = datetime.now()
+start_date = end_date - timedelta(days=3*365) # Default to 3 years for better MA calculation
+selected_start_date = st.sidebar.date_input("Start Date", start_date)
+selected_end_date = st.sidebar.date_input("End Date", end_date)
 
-    progress = st.progress(0)
-    total = len(stocks_to_run)
-    processed = 0
+# --- Strategy Parameters ---
+st.sidebar.markdown("### 2. Strategy Parameters")
+ma_type = st.sidebar.selectbox("Moving Average Type", ["EMA", "SMA", "WMA"])
+fast_period = st.sidebar.number_input("Fast MA Period", min_value=1, max_value=100, value=12)
+slow_period = st.sidebar.number_input("Slow MA Period", min_value=1, max_value=250, value=26)
 
-    for s in stocks_to_run:
-        processed += 1
+# Validate that slow > fast
+if slow_period <= fast_period:
+    st.sidebar.error("Slow MA Period must be greater than Fast MA Period.")
+    st.stop()
+
+# --- Exit Rules ---
+st.sidebar.markdown("### 3. Exit Rules")
+exit_strategy = st.sidebar.selectbox("Exit Strategy", ["Take Profit / Stop Loss", "Reverse Crossover"])
+
+take_profit = None
+stop_loss = None
+
+if exit_strategy == "Take Profit / Stop Loss":
+    take_profit_pct = st.sidebar.number_input("Take Profit %", min_value=0.1, max_value=100.0, value=10.0, step=0.5)
+    stop_loss_pct = st.sidebar.number_input("Stop Loss %", min_value=0.1, max_value=100.0, value=5.0, step=0.5)
+    
+    # Convert from % to decimal
+    take_profit = take_profit_pct / 100.0
+    stop_loss = stop_loss_pct / 100.0
+    
+    exit_criteria_str = f"Sell at {take_profit_pct}% profit or {stop_loss_pct}% loss."
+else:
+    exit_criteria_str = "Sell when Fast MA crosses below Slow MA."
+
+
+# --- Run Backtest Button ---
+st.sidebar.markdown("---")
+if st.sidebar.button("Run Backtest", use_container_width=True):
+    with st.spinner("Running backtest... This may take a moment."):
+        
+        # 1. Fetch Data
         try:
-            st.info(f"Fetching {s} ({processed}/{total})...")
-            df = fetch_stock_data(s, months=3)
-            if df.empty:
-                st.warning(f"No data for {s}. Skipping.")
-                progress.progress(processed/total)
-                continue
-
-            st.info(f"Generating signals for {s}...")
-            df_signals = generate_signals(df, ma_type, fast, slow)
-
-            bt = Backtester(df_signals, profit_target=profit_target, stop_loss=stop_loss,
-                            exit_rule=exit_choice, trailing_stop_pct=trailing_pct, max_hold_days=max_days)
-
-            stats = bt.run()
-
-            summary_rows.append({
-                "Stock": s,
-                "Return (%)": stats["total_return"],
-                "Max Drawdown (%)": stats["drawdown"],
-                "Win Rate (%)": stats["win_rate"],
-                "Trades": stats["num_trades"]
-            })
-            detailed_results[s] = {"df": df_signals, "stats": stats}
-
-            progress.progress(processed/total)
+            data = data_fetcher.fetch_data(ticker, selected_start_date, selected_end_date)
+            if data.empty:
+                st.error("No data found for the given ticker and date range. Please check the ticker symbol.")
+                st.stop()
         except Exception as e:
-            st.error(f"Error for {s}: {e}")
-            progress.progress(processed/total)
-            continue
+            st.error(f"Error fetching data: {e}")
+            st.stop()
 
-    # Summary table
-    summary_df = pd.DataFrame(summary_rows).sort_values(by="Return (%)", ascending=False)
-    st.subheader("Backtest Summary")
-    st.write(f"Strategy: {fast}/{slow} {ma_type} crossover | Exit: {exit_choice} | Profit target: {profit_target*100:.2f}% | Stop loss: {stop_loss*100:.2f}%")
-    st.dataframe(summary_df)
+        # 2. Generate Signals
+        signals_df = strategy.generate_signals(data, ma_type, fast_period, slow_period)
+        
+        # Filter signals_df to the hackathon's 3-month period (Aug 1 - Oct 31, 2025)
+        # We use *longer* data to calculate MAs, but *test* on the specific period.
+        
+        # Let's make the 3-month period dynamic, based on the *end date*
+        # As per prompt: "last 3 months"
+        test_end_date = selected_end_date
+        test_start_date = test_end_date - timedelta(days=90)
+        
+        # Filter the dataframe for the actual 3-month test period
+        test_df = signals_df[test_start_date:test_end_date].copy()
+        
+        if test_df.empty:
+            st.error("Not enough data in the selected 3-month test period. Please select a later End Date.")
+            st.stop()
 
-    # Download CSV
-    csv = summary_df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Summary CSV", csv, file_name=f"backtest_summary_{date.today()}.csv", mime='text/csv')
+        # 3. Run Backtest
+        results = backtester.run_backtest(test_df, exit_strategy, take_profit, stop_loss)
 
-    # Show top N stocks details
-    top_n = st.number_input("Show top N stocks detail", min_value=1, max_value=20, value=3)
-    top_stocks = summary_df.head(top_n)['Stock'].tolist()
+        # 4. Prepare Report Strings
+        strategy_name = f"{fast_period}/{slow_period}-day {ma_type} Crossover"
+        backtest_period = f"{test_df.index.min().strftime('%Y-%m-%d')} to {test_df.index.max().strftime('%Y-%m-%d')}"
+        entry_criteria = f"Buy when {fast_period}-day {ma_type} crosses above {slow_period}-day {ma_type}"
 
-    for stock in top_stocks:
-        if stock not in detailed_results:
-            continue
-        st.markdown(f"---\n## {stock} — Detailed View")
-        info_col, chart_col = st.columns([1, 2])
+        # --- Display Results ---
+        st.subheader("Backtest Report")
+        
+        # 4a. Display Hackathon Metrics Table
+        utils.display_metrics_table(
+            results,
+            strategy_name,
+            ticker,
+            backtest_period,
+            entry_criteria,
+            exit_criteria_str
+        )
+        
+        st.markdown("---")
 
-        with info_col:
-            st.write("**Performance**")
-            stats = detailed_results[stock]['stats']
-            st.metric("Total Return (%)", stats['total_return'])
-            st.metric("Max Drawdown (%)", stats['drawdown'])
-            st.metric("Win Rate (%)", f"{stats['win_rate']}%")
-            st.metric("Trades", stats['num_trades'])
+        # 4b. Display Performance Graph
+        st.subheader("Performance Graph")
+        fig = utils.plot_backtest_graph(test_df, results['trades'], strategy_name)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("---")
 
-            st.write("**Trade Log (latest)**")
-            trades_df = stats['trades']
-            if not trades_df.empty:
-                st.dataframe(trades_df.tail(10))
-                csv_buf = trades_df.to_csv(index=False).encode('utf-8')
-                st.download_button(f"Download {stock} trades CSV", csv_buf, file_name=f"{stock}_trades_{date.today()}.csv")
-            else:
-                st.write("No trades were generated.")
+        # 4c. Display Trade Log
+        st.subheader("Trade Log")
+        st.dataframe(results['trades'])
 
-        with chart_col:
-            df_stock = detailed_results[stock]['df']
-            fig1 = plot_candlestick(df_stock, title=f"{stock} Candlestick")
-            st.plotly_chart(fig1, use_container_width=True)
-
-            fig2 = plot_ohlc_bar(df_stock, title=f"{stock} OHLC Bars")
-            st.plotly_chart(fig2, use_container_width=True)
-
-            fig3 = plot_line(df_stock, column='Close', title=f"{stock} Close Price")
-            st.plotly_chart(fig3, use_container_width=True)
-
-            ha = heikin_ashi(df_stock)
-            fig4 = plot_heikin_ashi(df_stock, ha, title=f"{stock} Heikin-Ashi")
-            st.plotly_chart(fig4, use_container_width=True)
-
-            bricks = renko_bricks(df_stock)
-            fig5 = plot_renko(bricks, title=f"{stock} Renko (approx)")
-            st.plotly_chart(fig5, use_container_width=True)
-
-    st.success("Backtest completed.")
+else:
+    st.info("Configure your strategy in the sidebar and click 'Run Backtest'.")

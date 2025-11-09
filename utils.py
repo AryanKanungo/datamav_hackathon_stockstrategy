@@ -126,7 +126,8 @@ def _plot_distributions(results_df: pd.DataFrame):
             labels={'total_return': 'Total Return (%)'}, template="plotly_dark"
         )
         fig_return.update_layout(yaxis_title="Number of Stocks")
-        st.plotly_chart(fig_return, use_container_width=True)
+        # *** PROACTIVE FIX: Added key ***
+        st.plotly_chart(fig_return, use_container_width=True, key="dist_return")
     
     with col2:
         fig_winrate = px.histogram(
@@ -134,7 +135,8 @@ def _plot_distributions(results_df: pd.DataFrame):
             labels={'win_rate': 'Win Rate (%)'}, color_discrete_sequence=['#2ca02c'], template="plotly_dark"
         )
         fig_winrate.update_layout(yaxis_title="Number of Stocks")
-        st.plotly_chart(fig_winrate, use_container_width=True)
+        # *** PROACTIVE FIX: Added key ***
+        st.plotly_chart(fig_winrate, use_container_width=True, key="dist_winrate")
 
     with col3:
         fig_drawdown = px.histogram(
@@ -142,7 +144,8 @@ def _plot_distributions(results_df: pd.DataFrame):
             labels={'max_drawdown': 'Max Drawdown (%)'}, color_discrete_sequence=['#d62728'], template="plotly_dark"
         )
         fig_drawdown.update_layout(yaxis_title="Number of Stocks")
-        st.plotly_chart(fig_drawdown, use_container_width=True)
+        # *** PROACTIVE FIX: Added key ***
+        st.plotly_chart(fig_drawdown, use_container_width=True, key="dist_drawdown")
 
 def _plot_top_bottom_performers(results_df: pd.DataFrame):
     """
@@ -170,7 +173,8 @@ def _plot_top_bottom_performers(results_df: pd.DataFrame):
         )
         fig_top.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
         fig_top.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_top, use_container_width=True)
+        # *** PROACTIVE FIX: Added key ***
+        st.plotly_chart(fig_top, use_container_width=True, key="bar_top")
         
     with col2:
         fig_bottom = px.bar(
@@ -181,7 +185,8 @@ def _plot_top_bottom_performers(results_df: pd.DataFrame):
         )
         fig_bottom.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
         fig_bottom.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_bottom, use_container_width=True)
+        # *** PROACTIVE FIX: Added key ***
+        st.plotly_chart(fig_bottom, use_container_width=True, key="bar_bottom")
 
 def _plot_correlation(results_df: pd.DataFrame):
     """
@@ -194,7 +199,8 @@ def _plot_correlation(results_df: pd.DataFrame):
         hover_name='ticker', template="plotly_dark", trendline="ols",
         color_discrete_sequence=['#1f77b4']
     )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    # *** PROACTIVE FIX: Added key ***
+    st.plotly_chart(fig_scatter, use_container_width=True, key="scatter_corr")
 
 def display_batch_analysis_charts(results_df: pd.DataFrame):
     """
@@ -219,6 +225,8 @@ def display_batch_analysis_charts(results_df: pd.DataFrame):
 def _plot_trade_markers(fig: go.Figure, trades_df: pd.DataFrame):
     """Helper function to add common trade markers to any chart."""
     if not trades_df.empty:
+        # Note: Your backtester.py sets the index to 'Entry Date'
+        # So we use trades_df.index for entry
         fig.add_trace(go.Scatter(
             x=trades_df.index, y=trades_df['Entry Price'], mode='markers', name='Buy Signal',
             marker=dict(color='green', symbol='triangle-up', size=10, line=dict(width=1, color='Black'))
@@ -297,6 +305,12 @@ def _plot_pnl_analysis(trades_df: pd.DataFrame) -> go.Figure:
             title="P&L Analysis", template="plotly_dark",
             annotations=[dict(text="No trades to analyze.", showarrow=False)]
         )
+        
+    # Check for required columns for P&L plot
+    if 'Cumulative Return' not in trades_df.columns or 'P&L %' not in trades_df.columns:
+        st.warning("P&L analysis requires 'Cumulative Return' and 'P&L %' columns from backtester.")
+        return go.Figure().update_layout(title="P&L Analysis (Data Missing)", template="plotly_dark")
+
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.1,
@@ -323,28 +337,34 @@ def _plot_pnl_analysis(trades_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def display_single_stock_analysis(signals_df: pd.DataFrame, trades_df: pd.DataFrame, strategy_name: str):
+def display_single_stock_analysis(context: str, ticker: str, signals_df: pd.DataFrame, trades_df: pd.DataFrame, strategy_name: str):
     """
     Main function to create and display the tabbed chart interface.
     (This is the function that is re-used for all single-stock analysis)
+    
+    *** FIX 1: 'context' and 'ticker' are added as new arguments ***
     """
     
     tab1, tab2, tab3, tab4 = st.tabs(["Candlestick", "Heikin-Ashi", "Line (Close)", "P&L Analysis"])
     
     with tab1:
         fig_candle = _plot_candlestick_chart(signals_df, trades_df, strategy_name)
-        st.plotly_chart(fig_candle, use_container_width=True)
+        # *** FIX 2: Added unique key using context and ticker ***
+        st.plotly_chart(fig_candle, use_container_width=True, key=f"{context}_candle_{ticker}")
 
     with tab2:
         fig_ha = _plot_heikin_ashi_chart(signals_df, trades_df, strategy_name)
-        st.plotly_chart(fig_ha, use_container_width=True)
+        # *** FIX 3: Added unique key using context and ticker ***
+        st.plotly_chart(fig_ha, use_container_width=True, key=f"{context}_ha_{ticker}")
         st.caption("Heikin-Ashi charts help visualize the trend's momentum and direction by averaging price data.")
 
     with tab3:
         fig_line = _plot_line_chart(signals_df, trades_df, strategy_name)
-        st.plotly_chart(fig_line, use_container_width=True)
+        # *** FIX 4: Added unique key using context and ticker ***
+        st.plotly_chart(fig_line, use_container_width=True, key=f"{context}_line_{ticker}")
 
     with tab4:
         fig_pnl = _plot_pnl_analysis(trades_df)
-        st.plotly_chart(fig_pnl, use_container_width=True)
+        # *** FIX 5: Added unique key using context and ticker ***
+        st.plotly_chart(fig_pnl, use_container_width=True, key=f"{context}_pnl_{ticker}")
         st.caption("The Equity Curve shows the compounded growth of your portfolio over time. The Histogram shows the frequency of winning vs. losing trades.")

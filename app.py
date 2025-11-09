@@ -14,7 +14,7 @@ import utils
 # PAGE CONFIG
 # ---
 st.set_page_config(layout="wide", page_title="Hybrid Strategy Backtester")
-st.title("📈 4:1 (20%/5%) Hybrid Strategy Backtester")
+st.title(" 4:1 (20%/5%) Hybrid Strategy Backtester")
 st.subheader("Strategy: 1-Day Price / 45-Day SMA Crossover")
 
 
@@ -43,9 +43,14 @@ EXIT_CRITERIA_STR = f"Sell at {TAKE_PROFIT_PCT}% T/P, {STOP_LOSS_PCT}% S/L, or {
 # HELPER FUNCTION (to run a single test)
 # ---
 @st.cache_data
-def run_full_test_for_ticker(ticker, data_fetch_start_date, selected_end_date, selected_start_date):
-    """Helper to run the full data-fetch and backtest pipeline for one ticker."""
-    data = data_fetcher.fetch_data(ticker, data_fetch_start_date, selected_end_date)
+def run_full_test_for_ticker(ticker, data_fetch_start_date, selected_end_date, selected_start_date, is_batch: bool = False):
+    """
+    Helper to run the full data-fetch and backtest pipeline for one ticker.
+    
+    --- FIX: Added 'is_batch' parameter ---
+    """
+    # --- FIX: Pass 'is_batch' to data_fetcher ---
+    data = data_fetcher.fetch_data(ticker, data_fetch_start_date, selected_end_date, is_batch=is_batch)
     if data.empty:
         return None, None
 
@@ -65,22 +70,8 @@ def run_full_test_for_ticker(ticker, data_fetch_start_date, selected_end_date, s
 # ---
 st.sidebar.header("Test Configuration")
 
-# --- Section 1: Single Stock Test ---
-st.sidebar.markdown("### 1. Single Stock Test")
-ticker_input = st.sidebar.text_input("Stock Ticker", "RELIANCE.NS")
-st.sidebar.caption("e.g., INFY.NS, TCS.NS, HDFCBANK.NS")
-
-# --- Section 2: Batch Test (NSE 500) ---
-st.sidebar.markdown("### 2. Batch Test")
-csv_file_path = "nifty500.csv"
-st.sidebar.caption(f"Using tickers from: `{csv_file_path}`")
-num_stocks_to_test = st.sidebar.number_input(
-    "Number of Stocks to Test", min_value=1, value=50
-)
-st.sidebar.caption(f"Will randomly select {num_stocks_to_test} stocks.")
-
-# --- Section 3: Date Range ---
-st.sidebar.markdown("### 3. Backtest Period")
+# --- Section 1: Date Range (Applies to all tests) ---
+st.sidebar.markdown("### 1. Backtest Period")
 default_start_date = datetime(2025, 8, 1)
 default_end_date = datetime(2025, 10, 31)
 selected_start_date = st.sidebar.date_input("Backtest Start Date", default_start_date)
@@ -91,15 +82,45 @@ warm_up_days = SLOW_PERIOD + 60
 data_fetch_start_date = selected_start_date - timedelta(days=warm_up_days)
 backtest_period_str = f"{selected_start_date.strftime('%Y-%m-%d')} to {selected_end_date.strftime('%Y-%m-%d')}"
 
-# --- Run Backtest Buttons ---
 st.sidebar.markdown("---")
 
+# --- Section 2: Batch Test (Recommended) ---
+st.sidebar.markdown("### 2. Run Batch Test (Recommended)")
+csv_file_path = "nifty500.csv"
+num_stocks_to_test = st.sidebar.number_input(
+    "Number of Stocks to Test", min_value=1, value=50
+)
+st.sidebar.caption(f"Randomly selects {num_stocks_to_test} stocks from `{csv_file_path}`.")
+
+# BATCH TEST BUTTON (Primary)
+run_batch_button = st.sidebar.button(
+    "Run Batch Backtest", use_container_width=True, type="primary"
+)
+
+st.sidebar.markdown("---")
+
+# --- Section 3: Single Stock Test ---
+st.sidebar.markdown("### 3. Run Single Stock Test")
+st.sidebar.caption("Or, test one stock for a quick analysis.")
+ticker_input = st.sidebar.text_input("Stock Ticker", "RELIANCE.NS")
+st.sidebar.caption("e.g., INFY.NS, TCS.NS, HDFCBANK.NS")
+
+# SINGLE TEST BUTTON (Secondary)
+run_single_button = st.sidebar.button(
+    "Run Single Stock Test", use_container_width=True
+)
+
+# ---
+# BUTTON LOGIC
+# ---
+
 # Button 1: Single Stock
-if st.sidebar.button("Run Single Stock Test", use_container_width=True, type="primary"):
+if run_single_button:
     st.session_state.clear() # Clear old results
     st.session_state.run_mode = 'single'
     
     with st.spinner(f"Running backtest for {ticker_input}..."):
+        # Note: 'is_batch' defaults to False, which is correct here
         test_df, results = run_full_test_for_ticker(
             ticker_input, data_fetch_start_date, selected_end_date, selected_start_date
         )
@@ -113,7 +134,7 @@ if st.sidebar.button("Run Single Stock Test", use_container_width=True, type="pr
             st.success(f"Backtest for {ticker_input} complete.")
 
 # Button 2: Batch Test
-if st.sidebar.button("Run Batch Backtest", use_container_width=True):
+if run_batch_button:
     st.session_state.clear() # Clear old results
     st.session_state.run_mode = 'batch'
     
@@ -137,8 +158,9 @@ if st.sidebar.button("Run Batch Backtest", use_container_width=True):
         for i, ticker in enumerate(tickers):
             progress_bar.progress((i+1)/len(tickers), text=f"Running batch test... ({i+1}/{num_stocks_to_test})")
             
+            # --- FIX: Pass is_batch=True ---
             _, results = run_full_test_for_ticker(
-                ticker, data_fetch_start_date, selected_end_date, selected_start_date
+                ticker, data_fetch_start_date, selected_end_date, selected_start_date, is_batch=True
             )
             if results is None: continue # Skip if error
             
@@ -163,22 +185,26 @@ if st.sidebar.button("Run Batch Backtest", use_container_width=True):
     # --- STAGE 2: Re-run detailed analysis for Top/Worst 5 ---
     with st.spinner("Analyzing top/worst 5 performers..."):
         sorted_df = results_df.sort_values(by='total_return', ascending=False)
-        top_5_tickers = sorted_df.head(5)['ticker'].tolist()
-        worst_5_tickers = sorted_df.tail(5)['ticker'].tolist()
+        top_n = min(5, len(sorted_df)) # Handle cases with fewer than 5 results
+        
+        top_performers_tickers = sorted_df.head(top_n)['ticker'].tolist()
+        worst_performers_tickers = sorted_df.tail(top_n)['ticker'].tolist()
         
         top_performers_data = []
         worst_performers_data = []
 
-        for ticker in top_5_tickers:
+        for ticker in top_performers_tickers:
+            # --- FIX: Pass is_batch=True ---
             test_df, results = run_full_test_for_ticker(
-                ticker, data_fetch_start_date, selected_end_date, selected_start_date
+                ticker, data_fetch_start_date, selected_end_date, selected_start_date, is_batch=True
             )
             if test_df is not None:
                 top_performers_data.append((ticker, test_df, results))
         
-        for ticker in worst_5_tickers:
+        for ticker in worst_performers_tickers:
+            # --- FIX: Pass is_batch=True ---
             test_df, results = run_full_test_for_ticker(
-                ticker, data_fetch_start_date, selected_end_date, selected_start_date
+                ticker, data_fetch_start_date, selected_end_date, selected_start_date, is_batch=True
             )
             if test_df is not None:
                 worst_performers_data.append((ticker, test_df, results))
@@ -209,7 +235,7 @@ tabs = st.tabs(tab_titles)
 
 # --- Tab 1: Strategy Rationale (Always Shown) ---
 with tabs[0]:
-    with st.expander("💡 Strategy Rationale: The 1/45 SMA (4:1 P/L) Hybrid Model", expanded=True):
+    with st.expander(" Strategy Rationale: The 1/45 SMA (4:1 P/L) Hybrid Model", expanded=True):
         st.markdown(f"""
         This backtester is locked to a specific hybrid strategy designed to capture quick, high-momentum trades and exit them with a clear, predefined risk-to-reward ratio.
         
@@ -229,14 +255,14 @@ with tabs[0]:
 # --- Handle Drawing Logic Based on Run Mode ---
 
 if run_mode == 'none':
-    main_metrics_container.info("Select a test from the sidebar and click 'Run'.")
+    main_metrics_container.info(" Select a test from the sidebar to begin. The **Batch Test** is recommended for a full analysis.")
 
 elif run_mode == 'single':
     # --- Populate Main Metrics Container ---
     ticker = st.session_state.single_ticker
     results = st.session_state.single_results
     with main_metrics_container:
-        st.subheader(f"Single Stock Report: {ticker}")
+        st.subheader(f" Single Stock Report: {ticker}")
         utils.display_metrics_table(
             results, STRATEGY_NAME, ticker, backtest_period_str, ENTRY_CRITERIA_STR, EXIT_CRITERIA_STR
         )
@@ -246,7 +272,13 @@ elif run_mode == 'single':
     # --- Populate "Single Stock Analysis" Tab ---
     with tabs[1]:
         test_df = st.session_state.single_test_df
-        utils.display_single_stock_analysis(test_df, results['trades'], STRATEGY_NAME)
+        # ---
+        # *** FIX 1: Pass all required arguments to the analysis function ***
+        # The function needs (context, ticker, signals_df, trades_df, strategy_name)
+        # ---
+        utils.display_single_stock_analysis(
+            "single_stock", ticker, test_df, results['trades'], STRATEGY_NAME
+        )
 
 elif run_mode == 'batch':
     results_df = st.session_state.batch_results_df
@@ -272,9 +304,14 @@ elif run_mode == 'batch':
             st.warning("No data for top performers.")
         else:
             for ticker, test_df, results in top_data:
-                exp_title = f"📈 {ticker} (Total Return: {results['total_return']:.2f}%)"
+                exp_title = f"{ticker} (Total Return: {results['total_return']:.2f}%)"
                 with st.expander(exp_title, expanded=False):
-                    utils.display_single_stock_analysis(test_df, results['trades'], STRATEGY_NAME)
+                    # ---
+                    # *** FIX 2: Pass all required arguments, including "top_5" context ***
+                    # ---
+                    utils.display_single_stock_analysis(
+                        "top_5", ticker, test_df, results['trades'], STRATEGY_NAME
+                    )
 
     # --- Populate "Worst 5 Performers" Tab ---
     with tabs[3]:
@@ -287,6 +324,11 @@ elif run_mode == 'batch':
             # Sort by return ascending (worst first)
             worst_data.sort(key=lambda x: x[2]['total_return'])
             for ticker, test_df, results in worst_data:
-                exp_title = f"📉 {ticker} (Total Return: {results['total_return']:.2f}%)"
+                exp_title = f" {ticker} (Total Return: {results['total_return']:.2f}%)"
                 with st.expander(exp_title, expanded=False):
-                    utils.display_single_stock_analysis(test_df, results['trades'], STRATEGY_NAME)
+                    # ---
+                    # *** FIX 3: Pass all required arguments, including "worst_5" context ***
+                    # ---
+                    utils.display_single_stock_analysis(
+                        "worst_5", ticker, test_df, results['trades'], STRATEGY_NAME
+                    )
